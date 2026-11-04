@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	_ "modernc.org/sqlite"
@@ -34,12 +35,17 @@ func Open(path string) (*Store, error) {
 		}
 		chmodErr := f.Chmod(0600)
 		closeErr := f.Close()
-		if chmodErr != nil || closeErr != nil {
+		if (chmodErr != nil && runtime.GOOS != "windows") || closeErr != nil {
 			return nil, errors.New("设置数据库文件权限失败")
 		}
 		absolute, err := filepath.Abs(path)
 		if err != nil {
 			return nil, err
+		}
+		// A Windows drive belongs in the URI path, not its authority.
+		absolute = filepath.ToSlash(absolute)
+		if !strings.HasPrefix(absolute, "/") {
+			absolute = "/" + absolute
 		}
 		// Escape filenames containing '?' or '#' instead of treating them as DSN options.
 		dsn = (&url.URL{Scheme: "file", Path: absolute}).String()

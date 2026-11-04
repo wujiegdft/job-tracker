@@ -8,8 +8,28 @@ import (
 	"testing"
 )
 
+func TestStoreWindowsDrivePath(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("requires a Windows drive path")
+	}
+	path := filepath.Join(t.TempDir(), "Users", "wujie", "AppData", "Roaming", "job-tracker", "applications.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if items, err := s.List(); err != nil || len(items) != 0 {
+		t.Fatalf("new Windows store: %v, %v", items, err)
+	}
+}
+
 func TestStoreCRUDPersistence(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "jobs?#.sqlite")
+	filename := "jobs?#.sqlite"
+	if runtime.GOOS == "windows" {
+		// '?' is not a valid Windows filename; '#' and spaces still need URI escaping.
+		filename = "jobs #.sqlite"
+	}
+	path := filepath.Join(t.TempDir(), "private", filename)
 	s, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
