@@ -29,13 +29,9 @@ jd 保留职位描述原文；不要编造工资、联系人或公司岗位。�
 // Extract returns an unsaved draft. Only descriptive fields can come from the
 // model: ID, dates, status and priority always retain safe local defaults.
 func Extract(ctx context.Context, c Config, text string, image []byte) (Application, error) {
-	c = normalizedConfig(c)
-	u, err := parseBaseURL(c.BaseURL)
-	if err != nil {
-		return Application{}, err
-	}
-	if c.APIKey == "" || c.Model == "" {
-		return Application{}, errors.New("AI 提取需要填写 API key 和模型")
+	c.APIKey = strings.TrimSpace(c.APIKey)
+	if c.APIKey == "" {
+		return Application{}, errors.New("AI 提取需要填写 DeepSeek API key")
 	}
 	if strings.TrimSpace(text) == "" && len(image) == 0 {
 		return Application{}, errors.New("请提供招聘文字或图片")
@@ -61,13 +57,8 @@ func Extract(ctx context.Context, c Config, text string, image []byte) (Applicat
 		})
 		userContent = parts
 	}
-	u.Path = strings.TrimRight(u.Path, "/")
-	if !strings.HasSuffix(u.Path, "/chat/completions") {
-		u.Path += "/chat/completions"
-	}
-	u.RawPath = ""
 	body, err := json.Marshal(map[string]any{
-		"model": c.Model,
+		"model": DeepSeekModel,
 		"messages": []any{
 			map[string]any{"role": "system", "content": extractionPrompt},
 			map[string]any{"role": "user", "content": userContent},
@@ -78,7 +69,7 @@ func Extract(ctx context.Context, c Config, text string, image []byte) (Applicat
 	if err != nil {
 		return Application{}, errors.New("无法编码 AI 请求")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, DeepSeekBaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return Application{}, errors.New("无法创建 AI 请求")
 	}

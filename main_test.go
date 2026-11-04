@@ -17,7 +17,7 @@ func testApp(t *testing.T) (*app, *ui.Tester) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { store.Close() })
-	a := &app{store: store, configPath: filepath.Join(dir, "config.json"), config: tracker.DefaultConfig()}
+	a := &app{store: store, configPath: filepath.Join(dir, "config.json")}
 	a.reload()
 	return a, ui.NewTester(a.view, 1280, 860)
 }
@@ -101,11 +101,13 @@ func TestDraftAndSettings(t *testing.T) {
 		t.Fatal("missing configuration was not explained")
 	}
 	click(t, tt, "设置")
-	typeInto(t, tt, "模型名", "vision-model")
-	typeInto(t, tt, "API key", "test-only-key")
+	if tt.HasText("接口地址（Base URL）") || tt.HasText("模型名") || !tt.HasText("DeepSeek 设置") {
+		t.Fatal("settings should only expose a DeepSeek API key")
+	}
+	typeInto(t, tt, "DeepSeek API key", "test-only-key")
 	click(t, tt, "保存设置")
 	config, err := tracker.LoadConfig(a.configPath)
-	if err != nil || config.Model != "vision-model" || config.APIKey != "test-only-key" {
+	if err != nil || config.APIKey != "test-only-key" {
 		t.Fatalf("settings not persisted: %+v, %v", config, err)
 	}
 	// The confirmation screen uses the same public save path as manual entry.

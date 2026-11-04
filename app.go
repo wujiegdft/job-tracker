@@ -202,8 +202,8 @@ func (a *app) extract() {
 	if a.busy {
 		return
 	}
-	if strings.TrimSpace(a.config.APIKey) == "" || strings.TrimSpace(a.config.Model) == "" {
-		a.fail(fmt.Errorf("请先在设置中填写 API key 和模型名"))
+	if strings.TrimSpace(a.config.APIKey) == "" {
+		a.fail(fmt.Errorf("请先在设置中填写 DeepSeek API key"))
 		return
 	}
 	if strings.TrimSpace(a.input) == "" && len(a.image) == 0 {

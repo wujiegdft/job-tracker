@@ -16,6 +16,8 @@
 go run .
 ```
 
+窗口图标通过 `go:embed` 嵌入，启动时调用 `SetIcon`，因此 `go run .` 也有图标，不依赖打包生成的 exe 资源。`resources/icon.png` 为 1024×1024 打包图标；`resources/window-icon.png` 是同图的 256×256 运行时版本，兼容 GTK/X11。Windows / Linux 用于标题栏和任务栏；macOS 窗口不单独显示图标，打包仍使用 1024px 版本。图标设置失败只记日志，不阻止启动。
+
 开发时自动重建：
 
 ```sh
@@ -70,10 +72,12 @@ go run github.com/egoist/mygo/cmd/mygo@latest init -template native job-tracker
 
 ### AI 智能录入
 
-1. 在「设置」中填写兼容 OpenAI 的接口地址（Base URL）、模型名与 API key，点击「保存设置」。无需配置 AI 也可使用全部手动功能。
+1. 在「设置」中只需填写 **DeepSeek API key**，点击「保存设置」。接口和模型固定为 `https://api.deepseek.com`、`deepseek-flash`，不可修改；不填 key 也可使用全部手动功能。
 2. 打开「AI 智能录入」，粘贴招聘文字 / JD；也可「粘贴截图」，或通过「选择图片」加载文件。文字与图片可同时提交。
 3. 点击「生成待确认草稿」，提取在后台执行；可取消请求，切换页面也会取消，过期结果不会覆盖新页面。
 4. 在「确认 AI 草稿」页逐项修正，点击「确认保存」才写入数据库。「取消」不会保存。
+
+![DeepSeek 设置：仅填写 API key](docs/screenshots/settings.png)
 
 ![文字与图片同时录入](docs/screenshots/ai-entry.png)
 
@@ -81,9 +85,8 @@ go run github.com/egoist/mygo/cmd/mygo@latest init -template native job-tracker
 
 接口规则与限制：
 
-- Base URL 可填 `https://api.openai.com/v1`，也可填完整的 `/chat/completions` 地址；支持 query 参数。
-- 默认模型名为 `gpt-4o-mini`；截图需要服务端模型支持视觉输入。
-- 使用 `POST /chat/completions`、Bearer token、`response_format: {"type":"json_object"}`，图片通过 base64 data URL 发送。服务端需兼容这些字段；不支持只提供 Responses API 的服务。
+- 仅支持 DeepSeek，固定向 `https://api.deepseek.com/chat/completions` 发送请求，模型为 `deepseek-flash`；旧配置里的 `base_url`、`model` 一律忽略。
+- 使用 Chat Completions、Bearer token、`response_format: {"type":"json_object"}`，截图通过 base64 data URL 发送；不做本地 OCR。
 - PNG / JPEG / WebP，最大 **10 MiB**。剪贴板无图片或平台读取失败时，改用文件选择；当前未实现拖放。
 - 请求超时 **45 秒**，响应上限 **2 MiB**。遇到 HTTP 错误、格式错误或缺失配置会显示提示，不会生成已保存记录。
 - 仅提取公司、岗位、城市、来源、来源人、岗位链接、JD、联系人、备注、薪资；未知信息留空。模型不能设置记录 ID、状态、日期或优先级；这些采用本地默认值。
@@ -92,7 +95,7 @@ go run github.com/egoist/mygo/cmd/mygo@latest init -template native job-tracker
 
 ### 隐私与本地文件
 
-记录保存在本机 SQLite，无云同步。仅点击 AI 生成按钮时，将录入页的文字和图片发送给设置的服务；不会附带其他投递记录。没有后台遥测。
+记录保存在本机 SQLite，无云同步。仅点击 AI 生成按钮时，将录入页的文字和图片发送给 DeepSeek；不会附带其他投递记录。没有后台遥测。
 
 默认目录由 Go 的 `os.UserConfigDir()` 决定：
 
@@ -102,9 +105,9 @@ go run github.com/egoist/mygo/cmd/mygo@latest init -template native job-tracker
 | macOS | `~/Library/Application Support/job-tracker` |
 | Windows | `%AppData%\job-tracker` |
 
-目录内：`applications.db` 保存投递；`config.json` 保存 AI 设置。新建目录权限为 `0700`，数据库与配置文件在 Unix 上为 `0600`；Windows 权限由系统 ACL 决定。
+目录内：`applications.db` 保存投递；`config.json` 仅保存 `api_key`，再次保存时会移除旧的接口和模型字段。新建目录权限为 `0700`，数据库与配置文件在 Unix 上为 `0600`；Windows 权限由系统 ACL 决定。
 
-**API key 为本地明文，不使用系统钥匙串。** 设置页输入框隐藏 key；不要分享配置文件或把真实数据提交到 GitHub。日志与接口错误不会输出 key 或服务端原始响应。HTTP 接口不加密传输，请仅对可信本地服务使用 HTTP，远程接口使用 HTTPS。
+**API key 为本地明文，不使用系统钥匙串。** 设置页输入框隐藏 key；不要分享配置文件或把真实数据提交到 GitHub。日志与接口错误不会输出 key 或服务端原始响应；DeepSeek 请求固定使用 HTTPS。
 
 可指定独立目录进行演示、测试或便携使用：
 
@@ -134,16 +137,16 @@ go tool mygo build -platform darwin/universal,windows/amd64,linux/amd64
 - `CGO_ENABLED=0 go test -count=1 ./...`：通过；覆盖 SQLite 全字段重开持久化、CRUD、日期校验、五维筛选、配置权限，以及 AI 多模态请求、取消与错误处理。
 - `go test -race -count=1 ./...`、`go vet ./...`、`go tool mygo vet .`：通过。
 - MyGo 无窗口交互测试（`ui.NewTester`）：新增 / 编辑 / 删除确认、筛选、筛选中行内改状态、设置保存、AI 草稿确认前不落库。
-- Linux 真实原生窗口：通过文件选择加载招聘截图，文字 + 图片发送到本地模拟接口，收到草稿后确认写入 SQLite；鼠标操作状态下拉、编辑与删除取消，检查数据库结果。已检查实际渲染截图及交互录屏。
-- `go tool mygo build -platform linux/amd64`：成功生成可执行文件、`.deb` 和 `.tar.gz`。Windows amd64 / macOS arm64 仅验证交叉编译，未进行真实系统运行测试。
-- 未接入真实付费模型；不同厂商的兼容性与识别准确率需使用自己的服务验证。Linux orb 无 GPU，窗口使用 MyGo 的 CPU 绘制回退。
+- Linux `go run .`：标题栏 / 任务栏图标、仅 key 设置保存（密码掩码）、文件选择附加招聘截图；已检查默认 / 已保存截图及真实鼠标录屏。
+- `go tool mygo build -platform linux/amd64`：成功生成可执行文件、`.deb` 和 `.tar.gz`。`go tool mygo build -platform windows/amd64`：成功生成 exe，因未安装 NSIS 跳过安装包。macOS arm64 交叉编译通过；Windows / macOS 均未实机运行。
+- 未调用真实 DeepSeek；固定接口、模型与截图请求通过本地 mock 验证，服务端模型可用性与识别准确率未实测。Linux orb 无 GPU，窗口使用 MyGo 的 CPU 绘制回退。
 
 ## 代码组织
 
 - `main.go`：数据目录、应用生命周期与原生窗口。
 - `app.go`：界面状态、持久化动作、图片附件与可取消的后台提取。
 - `views.go`：列表、筛选、编辑、AI 录入、设置；无 webview。
-- `internal/tracker/`：领域校验、SQLite、配置文件、OpenAI 兼容客户端；不依赖 UI，可独立测试。
+- `internal/tracker/`：领域校验、SQLite、仅 key 的配置文件、DeepSeek 客户端；不依赖 UI，可独立测试。
 - `main_test.go`：从用户操作入口验证完整流程。
 
 ## Roadmap（尚未实现）

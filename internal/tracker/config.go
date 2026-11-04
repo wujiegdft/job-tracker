@@ -4,26 +4,24 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 )
 
+const (
+	DeepSeekBaseURL = "https://api.deepseek.com"
+	DeepSeekModel   = "deepseek-flash"
+)
+
 type Config struct {
-	BaseURL string `json:"base_url"`
-	Model   string `json:"model"`
-	APIKey  string `json:"api_key"`
+	APIKey string `json:"api_key"`
 }
 
-func DefaultConfig() Config {
-	return Config{BaseURL: "https://api.openai.com/v1", Model: "gpt-4o-mini"}
-}
-
-// LoadConfig overlays stored fields on the defaults. An explicitly empty model
-// or API key is valid for manual use of the app.
+// LoadConfig reads only the API key, ignoring legacy provider settings.
+// An empty API key is valid for manual use of the app.
 func LoadConfig(path string) (Config, error) {
-	c := DefaultConfig()
+	var c Config
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return c, nil
@@ -44,10 +42,7 @@ func LoadConfig(path string) (Config, error) {
 		// Do not expose parser errors: a provider/key may be present in input.
 		return Config{}, errors.New("AI 配置文件格式无效")
 	}
-	c = normalizedConfig(c)
-	if _, err := parseBaseURL(c.BaseURL); err != nil {
-		return Config{}, err
-	}
+	c.APIKey = strings.TrimSpace(c.APIKey)
 	return c, nil
 }
 
@@ -55,10 +50,7 @@ func LoadConfig(path string) (Config, error) {
 // world-readable file. Existing parent directories are not chmodded, since a
 // caller may legitimately choose a shared parent such as their home directory.
 func SaveConfig(path string, c Config) error {
-	c = normalizedConfig(c)
-	if _, err := parseBaseURL(c.BaseURL); err != nil {
-		return err
-	}
+	c.APIKey = strings.TrimSpace(c.APIKey)
 	if err := ensureParentDirectory(path); err != nil {
 		return errors.New("无法创建配置目录")
 	}
@@ -88,21 +80,6 @@ func SaveConfig(path string, c Config) error {
 		return errors.New("无法替换 AI 配置文件")
 	}
 	return nil
-}
-
-func normalizedConfig(c Config) Config {
-	c.BaseURL = strings.TrimSpace(c.BaseURL)
-	c.Model = strings.TrimSpace(c.Model)
-	c.APIKey = strings.TrimSpace(c.APIKey)
-	return c
-}
-
-func parseBaseURL(value string) (*url.URL, error) {
-	u, err := url.Parse(value)
-	if err != nil || !validHTTPURL(value) || u.Fragment != "" || u.Opaque != "" {
-		return nil, errors.New("AI endpoint 必须是有效的 HTTP(S) 地址，且不能包含账号或片段")
-	}
-	return u, nil
 }
 
 func ensureParentDirectory(path string) error {

@@ -229,7 +229,7 @@ func (a *app) smartEntry(c *ui.Context) {
 				})
 			}
 		})
-		ui.Text(c, "隐私提示：仅点击生成时，将上述文字和图片发送至设置的 AI 服务。请先遮挡个人敏感信息。").FontSize(13).TextColor(c.Theme().TextMuted)
+		ui.Text(c, "隐私提示：仅点击生成时，将上述文字和图片发送至 DeepSeek。请先遮挡个人敏感信息。").FontSize(13).TextColor(c.Theme().TextMuted)
 		ui.Row(c).Gap(12).Children(func() {
 			ui.PrimaryButton(c, "生成待确认草稿").Disabled(a.busy || a.loading).OnClick(a.extract)
 			if a.busy {
@@ -242,13 +242,12 @@ func (a *app) smartEntry(c *ui.Context) {
 
 func (a *app) settings(c *ui.Context) {
 	ui.Row(c).Children(func() {
-		heading(c, "AI 服务设置", "OpenAI 兼容的 Chat Completions 接口；截图需选择支持视觉输入的模型。")
+		heading(c, "DeepSeek 设置", "只需填写 API key；接口地址与模型固定，无需选择。")
 	})
 	ui.Scroll(c).Grow(1).Gap(18).Children(func() {
 		ui.Column(c).MaxWidth(750).Padding(22).Gap(20).Radius(12).Border(1, c.Theme().Border).Children(func() {
-			inputField(c, "接口地址（Base URL）", &a.config.BaseURL, "https://api.openai.com/v1")
-			inputField(c, "模型名", &a.config.Model, "gpt-4o-mini")
-			ui.Field(c, "API key", func() { ui.TextInput(c, &a.config.APIKey).Label("API key").Password().Placeholder("sk-…") })
+			ui.Field(c, "DeepSeek API key", func() { ui.TextInput(c, &a.config.APIKey).Label("DeepSeek API key").Password().Placeholder("sk-…") })
+			ui.Text(c, "固定接口："+tracker.DeepSeekBaseURL+" · 模型："+tracker.DeepSeekModel).FontSize(13).TextColor(c.Theme().TextMuted)
 			ui.Text(c, "API key 以明文保存在本机 config.json 中（Unix 权限 0600），未使用系统钥匙串；请勿共享此文件。").FontSize(13).TextColor(c.Theme().TextMuted)
 			ui.Text(c, a.configPath).FontSize(12).TextColor(c.Theme().TextMuted)
 			ui.PrimaryButton(c, "保存设置").OnClick(a.saveConfig)

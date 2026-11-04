@@ -12,11 +12,40 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
+}
+
+// These tests must not run in parallel: they replace the default transport to
+// verify the production target before sending requests only to a local mock.
+func mockDeepSeekTransport(t *testing.T, srv *httptest.Server) {
+	t.Helper()
+	target, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := http.DefaultTransport
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.String() != "https://api.deepseek.com/chat/completions" {
+			t.Error("request did not target the fixed DeepSeek endpoint")
+			return nil, errors.New("unexpected AI endpoint")
+		}
+		local := r.Clone(r.Context())
+		local.URL.Scheme, local.URL.Host = target.Scheme, target.Host
+		local.Host = target.Host
+		return original.RoundTrip(local)
+	})
+	t.Cleanup(func() { http.DefaultTransport = original })
+}
 
 func writeCompletion(w http.ResponseWriter, answer string) {
 	w.Header().Set("Content-Type", "application/json")
@@ -32,7 +61,7 @@ func TestExtractMultimodalAndSafeDraft(t *testing.T) {
 	}
 	text := "  招聘原文\n第二行  "
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/v1/chat/completions" || r.Header.Get("Authorization") != "Bearer fake-key" || r.Header.Get("Content-Type") != "application/json" {
+		if r.Method != "POST" || r.URL.Path != "/chat/completions" || r.Header.Get("Authorization") != "Bearer fake-key" || r.Header.Get("Content-Type") != "application/json" {
 			t.Error("incorrect endpoint, method or headers")
 		}
 		var request struct {
@@ -50,7 +79,7 @@ func TestExtractMultimodalAndSafeDraft(t *testing.T) {
 			w.WriteHeader(400)
 			return
 		}
-		if request.Model != "vision-model" || request.ResponseFormat.Type != "json_object" || len(request.Messages) != 2 {
+		if request.Model != "deepseek-flash" || request.ResponseFormat.Type != "json_object" || len(request.Messages) != 2 {
 			t.Error("missing model, structured format, or messages")
 			w.WriteHeader(400)
 			return
@@ -76,8 +105,9 @@ func TestExtractMultimodalAndSafeDraft(t *testing.T) {
 		writeCompletion(w, `{"company":" 公司 ","role":"Go工程师","city":"杭州","source":"内推","source_person":"张三","url":"https://example.com/job","jd":"","contact":"招聘部","notes":"需核实","salary":"25-35K","id":{"malicious":true},"status":"Offer","priority":"高","applied_date":"1900-01-01","follow_up_date":"bad","interview_at":"2000-01-01 00:00"}`)
 	}))
 	defer srv.Close()
+	mockDeepSeekTransport(t, srv)
 	before := time.Now().Format(time.DateOnly)
-	a, err := Extract(context.Background(), Config{BaseURL: srv.URL + "/v1", Model: "vision-model", APIKey: "fake-key"}, text, pngBytes.Bytes())
+	a, err := Extract(context.Background(), Config{APIKey: " \t fake-key \n"}, text, pngBytes.Bytes())
 	after := time.Now().Format(time.DateOnly)
 	if err != nil {
 		t.Fatal(err)
@@ -90,29 +120,24 @@ func TestExtractMultimodalAndSafeDraft(t *testing.T) {
 	}
 }
 
-func TestExtractEndpointVariantsAndIncompleteDraft(t *testing.T) {
-	for _, suffix := range []string{"/v1", "/v1/", "/v1/chat/completions", "/v1/chat/completions/", "/v1?api-version=test"} {
-		t.Run(suffix, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path != "/v1/chat/completions" || (strings.Contains(suffix, "?") && r.URL.Query().Get("api-version") != "test") {
-					t.Error("incorrect resolved endpoint")
-				}
-				var request struct {
-					Messages []struct {
-						Content json.RawMessage `json:"content"`
-					} `json:"messages"`
-				}
-				if err := json.NewDecoder(r.Body).Decode(&request); err != nil || len(request.Messages) != 2 || string(request.Messages[1].Content) != `"only known text"` {
-					t.Error("incorrect text-only message")
-				}
-				writeCompletion(w, `{"url":"javascript:alert(1)","jd":"extracted JD"}`)
-			}))
-			defer srv.Close()
-			a, err := Extract(context.Background(), Config{srv.URL + suffix, "model", "fake-key"}, "only known text", nil)
-			if err != nil || a.Company != "" || a.Role != "" || a.Source != "其他" || a.URL != "" || a.JD != "extracted JD" {
-				t.Fatalf("incomplete draft rejected or unsafe URL accepted: %+v, %v", a, err)
-			}
-		})
+func TestExtractFixedProviderAndIncompleteDraft(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request struct {
+			Model    string `json:"model"`
+			Messages []struct {
+				Content json.RawMessage `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil || request.Model != "deepseek-flash" || len(request.Messages) != 2 || string(request.Messages[1].Content) != `"only known text"` {
+			t.Error("incorrect fixed model or text-only message")
+		}
+		writeCompletion(w, `{"url":"javascript:alert(1)","jd":"extracted JD"}`)
+	}))
+	defer srv.Close()
+	mockDeepSeekTransport(t, srv)
+	a, err := Extract(context.Background(), Config{APIKey: "fake-key"}, "only known text", nil)
+	if err != nil || a.Company != "" || a.Role != "" || a.Source != "其他" || a.URL != "" || a.JD != "extracted JD" {
+		t.Fatalf("incomplete draft rejected or unsafe URL accepted: %+v, %v", a, err)
 	}
 }
 
@@ -135,7 +160,8 @@ func TestExtractImageTypesAndInputValidation(t *testing.T) {
 		writeCompletion(w, `{}`)
 	}))
 	defer srv.Close()
-	c := Config{srv.URL + "/v1", "model", "fake-key"}
+	mockDeepSeekTransport(t, srv)
+	c := Config{APIKey: "fake-key"}
 	for _, imageBytes := range [][]byte{jpegBytes.Bytes(), webpBytes} {
 		if _, err := Extract(context.Background(), c, "", imageBytes); err != nil {
 			t.Fatal(err)
@@ -149,12 +175,13 @@ func TestExtractImageTypesAndInputValidation(t *testing.T) {
 		{c, " \t ", nil},
 		{c, "text", []byte("not an image")},
 		{c, "text", make([]byte, maxImageBytes+1)},
-		{Config{c.BaseURL, "", c.APIKey}, "text", nil},
-		{Config{c.BaseURL, c.Model, ""}, "text", nil},
-		{Config{"file:///fake-key", c.Model, c.APIKey}, "text", nil},
+		{Config{}, "text", nil},
+		{Config{APIKey: " \t\n "}, "text", nil},
 	} {
 		if _, err := Extract(context.Background(), tc.config, tc.text, tc.image); err == nil || strings.Contains(err.Error(), "fake-key") {
 			t.Fatal("invalid input accepted or key leaked")
+		} else if strings.TrimSpace(tc.config.APIKey) == "" && !strings.Contains(err.Error(), "DeepSeek API key") {
+			t.Fatal("missing key error did not identify DeepSeek API key")
 		}
 	}
 	if calls.Load() != 2 {
@@ -186,7 +213,8 @@ func TestExtractProviderErrorsAreBoundedAndRedacted(t *testing.T) {
 				io.WriteString(w, tc.body)
 			}))
 			defer srv.Close()
-			_, err := Extract(context.Background(), Config{srv.URL, "model", "fake-key"}, "job", nil)
+			mockDeepSeekTransport(t, srv)
+			_, err := Extract(context.Background(), Config{APIKey: "fake-key"}, "job", nil)
 			if err == nil || strings.Contains(err.Error(), "fake-key") || strings.Contains(err.Error(), "echoed raw response") {
 				t.Fatal("provider failure accepted or response/key leaked")
 			}
@@ -207,6 +235,7 @@ func TestExtractCancellationAndDeadline(t *testing.T) {
 				}
 			}))
 			defer srv.Close()
+			mockDeepSeekTransport(t, srv)
 			ctx, cancel := context.WithCancel(context.Background())
 			if deadline {
 				cancel()
@@ -215,7 +244,7 @@ func TestExtractCancellationAndDeadline(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := Extract(ctx, Config{srv.URL, "model", "fake-key"}, "job", nil)
+				_, err := Extract(ctx, Config{APIKey: "fake-key"}, "job", nil)
 				done <- err
 			}()
 			select {
