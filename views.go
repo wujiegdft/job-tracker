@@ -28,7 +28,7 @@ func (a *app) view(c *ui.Context) {
 			})
 			ui.Text(c, "本地优先 · 由你掌控").FontSize(11).TextColor(t.TextMuted)
 		})
-		ui.Column(c).Grow(1).FillHeight().Padding(28).Gap(18).Children(func() {
+		ui.Column(c).Grow(1).MinWidth(0).FillHeight().Padding(28).Gap(18).Children(func() {
 			ui.Column(c.Key(a.page)).Grow(1).Gap(18).Children(func() {
 				switch a.page {
 				case "edit":
@@ -77,19 +77,24 @@ func (a *app) list(c *ui.Context) {
 		heading(c, "每一次投递，都有迹可循", "从公司出发，找到下一步机会。状态可直接在列表中修改。")
 		ui.PrimaryButton(c, "+ 新增投递").OnClick(func() { a.edit(tracker.NewApplication(), false) })
 	})
-	ui.Column(c).Padding(18).Gap(14).Radius(12).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
-		ui.Row(c).Gap(12).AlignItems(ui.Start).Children(func() {
-			ui.Field(c, "公司 · 优先检索", func() {
-				ui.Autocomplete(c, &a.filter.Company, a.companies()).Label("筛选公司").Placeholder("输入公司名称…")
-			}).Grow(2)
-			inputField(c, "岗位", &a.filter.Role, "例如 Go 后端")
-			inputField(c, "城市", &a.filter.City, "例如 上海")
-		})
-		ui.Row(c).Gap(12).AlignItems(ui.End).Children(func() {
-			selectField(c, "来源", &a.filter.Source, a.sources())
-			selectField(c, "状态", &a.filter.Status, append([]string{""}, tracker.Statuses...))
-			ui.Button(c, "清空筛选").OnClick(func() { a.filter = tracker.Filter{} })
-		})
+	ui.Grid(c).Columns(3).AlignItems(ui.End).Padding(18).GapX(12).GapY(14).
+		Radius(12).Background(c.Theme().Surface).Border(1, c.Theme().Border).Children(func() {
+		ui.Field(c, "公司 · 优先检索", func() {
+			ui.Autocomplete(c, &a.filter.Company, a.companies()).Label("筛选公司").Placeholder("输入公司名称…").Height(36)
+		}).Grow(1)
+		ui.Field(c, "岗位", func() {
+			ui.TextInput(c, &a.filter.Role).Label("岗位").Placeholder("例如 Go 后端").Height(36)
+		}).Grow(1)
+		ui.Field(c, "城市", func() {
+			ui.TextInput(c, &a.filter.City).Label("城市").Placeholder("例如 上海").Height(36)
+		}).Grow(1)
+		ui.Field(c, "来源", func() {
+			ui.Select(c, &a.filter.Source, a.sources()).Label("来源").Height(36)
+		}).Grow(1)
+		ui.Field(c, "状态", func() {
+			ui.Select(c, &a.filter.Status, append([]string{""}, tracker.Statuses...)).Label("状态").Height(36)
+		}).Grow(1)
+		ui.Button(c, "清空筛选").Height(36).FillWidth().OnClick(func() { a.filter = tracker.Filter{} })
 	})
 	visible := make([]*tracker.Application, 0, len(a.items))
 	for i := range a.items {
