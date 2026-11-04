@@ -1,0 +1,6 @@
+{
+  "name": "Job Tracker",
+  "identifier": "dev.cyberoctopus88.jobtracker",
+  "version": "0.1.0",
+  "out": "build"
+}

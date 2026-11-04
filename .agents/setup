@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Native MyGo needs no C compiler or webview. GTK/OpenGL are runtime libraries.
+packages=(libgtk-3-0 libgl1 fonts-noto-cjk)
+missing=()
+for package in "${packages[@]}"; do
+  dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q 'install ok installed' || missing+=("$package")
+done
+if ((${#missing[@]})); then
+  sudo apt-get update -qq
+  sudo apt-get install -y "${missing[@]}"
+fi
+
+go_root="$HOME/.local/go"
+if [[ ! -x "$go_root/bin/go" ]] || [[ "$($go_root/bin/go version)" != *'go1.27.3 '* ]]; then
+  [[ "$(uname -m)" == x86_64 ]] || { echo 'This orb setup expects Linux x64'; exit 1; }
+  archive="$(mktemp)"
+  trap 'rm -f "$archive"' EXIT
+  curl -fsSL https://go.dev/dl/go1.27.3.linux-amd64.tar.gz -o "$archive"
+  echo "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40  $archive" | sha256sum -c -
+  mkdir -p "$HOME/.local"
+  rm -rf "$go_root"
+  tar -C "$HOME/.local" -xzf "$archive"
+fi
+sudo ln -sf "$go_root/bin/go" /usr/local/bin/go
+sudo ln -sf "$go_root/bin/gofmt" /usr/local/bin/gofmt
+go version
+go mod download

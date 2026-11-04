@@ -1,0 +1,7 @@
+/build/
+/.mygo/
+mygo_windows_*.syso
+/.amp/
+*.db
+*.db-*
+config.json
