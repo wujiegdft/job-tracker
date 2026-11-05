@@ -12,6 +12,7 @@ import (
 
 type Application struct {
 	ID           int64  `json:"id"`
+	IsDemo       bool   `json:"is_demo"`
 	Company      string `json:"company"`
 	Role         string `json:"role"`
 	City         string `json:"city"`
@@ -116,4 +117,14 @@ func Matches(a Application, f Filter) bool {
 		strings.Contains(strings.ToLower(a.City), strings.ToLower(f.City)) &&
 		(f.Source == "" || a.Source == f.Source) &&
 		(f.Status == "" || a.Status == f.Status)
+}
+
+// GroupByStatus preserves the input order and references within each status.
+// Iterate Statuses for column order; missing groups are empty columns.
+func GroupByStatus(items []*Application) map[string][]*Application {
+	groups := make(map[string][]*Application)
+	for _, item := range items {
+		groups[item.Status] = append(groups[item.Status], item)
+	}
+	return groups
 }

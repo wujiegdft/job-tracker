@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
@@ -18,7 +19,9 @@ type Store struct {
 }
 
 const applicationColumns = `company, role, city, source, source_person, status,
-	applied_date, follow_up_date, interview_at, url, jd, contact, notes, priority, salary`
+	applied_date, follow_up_date, interview_at, url, jd, contact, notes, priority, salary, is_demo`
+
+const insertApplicationSQL = "INSERT INTO applications (" + applicationColumns + ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
 
 func Open(path string) (*Store, error) {
 	if strings.TrimSpace(path) == "" {
@@ -77,7 +80,7 @@ func (s *Store) migrate() error {
 	if err := tx.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
-	if version > 1 {
+	if version > 2 {
 		return errors.New("数据库版本高于当前程序支持的版本")
 	}
 	if version == 0 {
@@ -92,7 +95,12 @@ func (s *Store) migrate() error {
 		)`); err != nil {
 			return err
 		}
-		if _, err := tx.Exec("PRAGMA user_version = 1"); err != nil {
+	}
+	if version < 2 {
+		if _, err := tx.Exec("ALTER TABLE applications ADD COLUMN is_demo INTEGER NOT NULL DEFAULT 0 CHECK(is_demo IN (0,1))"); err != nil {
+			return err
+		}
+		if _, err := tx.Exec("PRAGMA user_version = 2"); err != nil {
 			return err
 		}
 	}
@@ -117,7 +125,7 @@ func (s *Store) List() ([]Application, error) {
 		if err := rows.Scan(&a.ID, &a.Company, &a.Role, &a.City, &a.Source,
 			&a.SourcePerson, &a.Status, &a.AppliedDate, &a.FollowUpDate,
 			&a.InterviewAt, &a.URL, &a.JD, &a.Contact, &a.Notes, &a.Priority,
-			&a.Salary); err != nil {
+			&a.Salary, &a.IsDemo); err != nil {
 			return nil, err
 		}
 		applications = append(applications, a)
@@ -127,6 +135,8 @@ func (s *Store) List() ([]Application, error) {
 
 // Save validates a manual/confirmed record. ID zero inserts; a positive ID
 // updates an existing record. AI drafts are never saved implicitly.
+// IsDemo is set only on insert; updates preserve the stored provenance and
+// restore it on a so callers cannot turn demo records into real ones or vice versa.
 func (s *Store) Save(a *Application) error {
 	if err := a.Validate(); err != nil {
 		return err
@@ -138,7 +148,7 @@ func (s *Store) Save(a *Application) error {
 		a.AppliedDate, a.FollowUpDate, a.InterviewAt, a.URL, a.JD, a.Contact,
 		a.Notes, a.Priority, a.Salary}
 	if a.ID == 0 {
-		result, err := s.db.Exec("INSERT INTO applications ("+applicationColumns+") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", args...)
+		result, err := s.db.Exec(insertApplicationSQL, append(args, a.IsDemo)...)
 		if err != nil {
 			return err
 		}
@@ -150,10 +160,49 @@ func (s *Store) Save(a *Application) error {
 		return nil
 	}
 	args = append(args, a.ID)
-	result, err := s.db.Exec(`UPDATE applications SET company=?, role=?, city=?,
+	err := s.db.QueryRow(`UPDATE applications SET company=?, role=?, city=?,
 		source=?, source_person=?, status=?, applied_date=?, follow_up_date=?,
-		interview_at=?, url=?, jd=?, contact=?, notes=?, priority=?, salary=? WHERE id=?`, args...)
-	return requireExisting(result, err)
+		interview_at=?, url=?, jd=?, contact=?, notes=?, priority=?, salary=? WHERE id=?
+		RETURNING is_demo`, args...).Scan(&a.IsDemo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("申请记录不存在")
+	}
+	return err
+}
+
+// LoadDemo atomically replaces only demo records, leaving real records intact.
+// A failure, including during commit, reports zero inserted records.
+func (s *Store) LoadDemo(now time.Time) (int, error) {
+	applications := DemoApplications(now)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec("DELETE FROM applications WHERE is_demo = 1"); err != nil {
+		return 0, err
+	}
+	for _, a := range applications {
+		if err := a.Validate(); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(insertApplicationSQL, a.Company, a.Role, a.City, a.Source,
+			a.SourcePerson, a.Status, a.AppliedDate, a.FollowUpDate, a.InterviewAt,
+			a.URL, a.JD, a.Contact, a.Notes, a.Priority, a.Salary, a.IsDemo); err != nil {
+			return 0, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return len(applications), nil
+}
+
+// ClearDemo is idempotent and never deletes real applications, even if their
+// company names or other descriptive fields match the demo fixtures.
+func (s *Store) ClearDemo() error {
+	_, err := s.db.Exec("DELETE FROM applications WHERE is_demo = 1")
+	return err
 }
 
 func (s *Store) Delete(id int64) error {

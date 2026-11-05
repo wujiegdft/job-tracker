@@ -1,6 +1,6 @@
 # 投递簿 · Job Tracker
 
-一个本地优先的桌面求职投递追踪器：按公司梳理机会，直接更新投递状态，把招聘文字或截图转成待确认草稿。
+一个本地优先的桌面求职投递追踪器：按公司梳理机会，用列表或看板更新投递状态，把招聘文字或截图转成待确认草稿。
 
 使用 [MyGo](https://github.com/egoist/mygo) **原生 UI（`ui` 包）**，全部界面由 Go 编写。无 HTML、JavaScript、Bun、WebView；SQLite 使用纯 Go 驱动 [`modernc.org/sqlite`](https://pkg.go.dev/modernc.org/sqlite)，无需 cgo 或 C 编译器。
 
@@ -58,7 +58,36 @@ go run github.com/egoist/mygo/cmd/mygo@latest init -template native job-tracker
 
 列表按投递日期从新到旧排序，同一天按新增顺序倒序。窄窗口可横向滚动表格查看操作列；长公司名和岗位名可在编辑页完整查看。
 
-**记录字段：**
+### 看板视图（Kanban）
+
+「投递记录」默认使用列表，可在筛选栏下切换「列表 / 看板」。切换不清除条件，两种视图共用公司、岗位、城市、来源、状态的筛选交集；重启后仍默认列表。
+
+- 按九个状态固定分列，每列显示匹配数量；空列保留并显示「暂无投递」。
+- 卡片展示公司、岗位、城市、来源、优先级，以及已填写的跟进日期 / 面试时间。
+- 点击卡片正文打开编辑页，保存后回到原看板；使用卡片底部下拉框改状态，立即写入 SQLite 并移动到对应列。若不再符合状态筛选，卡片会消失，但修改仍已保存。
+- 列等宽、卡片等高；横向滚动查看全部状态，列内可独立纵向滚动。窄窗口无需缩小卡片；可使用横向滚轮 / 触控板或拖动底部滚动条。暂不支持拖拽改状态。
+
+![看板：共用筛选、示例标记与卡片状态修改](docs/screenshots/kanban.png)
+
+![按公司筛选：只保留匹配卡片，空列仍显示占位](docs/screenshots/kanban-filtered.png)
+
+![窄窗口：横向滚动到末尾，Offer、被拒与放弃仍可操作](docs/screenshots/kanban-narrow.png)
+
+### 示例数据
+
+首次启动不会自动添加数据。空列表中的「载入示例数据」，或「设置 → 演示数据」可随时使用，正式版同样提供。
+
+1. 点击「载入示例数据」，确认后添加 **18 条虚构投递**：覆盖全部九种状态、六种来源及多个城市；内推 / 猎头附带虚构姓名。
+2. 日期按载入当天生成：包含今天跟进、已过期跟进和近期面试，用来体验筛选、列表及看板；日期不会随每天启动自动滚动，也不触发提醒。
+3. 公司旁有「示例」标签。编辑、改状态后仍保留示例标记，不能通过修改公司名变为真实记录。
+4. 已有示例时按钮变为「重新载入」；确认后在同一事务中替换旧示例，不会重复累加，**旧示例中的个人修改会丢失**。
+5. 「设置 → 演示数据 → 清除示例数据」需确认，**只删除 `is_demo=1` 的记录**，不会按公司名或其他文本猜测；同名的真实投递也保留。无示例时清除按钮不可用。
+
+载入 / 重新载入 / 清除均保留当前筛选。数据库自动从旧版 `user_version=1` 迁移到 `2`，旧记录默认是真实记录；建议升级前备份数据目录，升级后不要再用旧版程序打开数据库。
+
+![空列表：可选择载入示例数据](docs/screenshots/empty.png)
+
+### 记录字段
 
 - 机会：公司、岗位、城市、来源、内推人 / 猎头姓名、岗位链接、薪资。
 - 进度：状态、投递日期、下次跟进日期、面试时间、优先级。
@@ -77,7 +106,7 @@ go run github.com/egoist/mygo/cmd/mygo@latest init -template native job-tracker
 3. 点击「生成待确认草稿」，提取在后台执行；可取消请求，切换页面也会取消，过期结果不会覆盖新页面。
 4. 在「确认 AI 草稿」页逐项修正，点击「确认保存」才写入数据库。「取消」不会保存。
 
-![DeepSeek 设置：仅填写 API key](docs/screenshots/settings.png)
+![设置：DeepSeek API key 与可随时载入、清除的演示数据](docs/screenshots/settings.png)
 
 ![文字与图片同时录入](docs/screenshots/ai-entry.png)
 
@@ -134,9 +163,10 @@ go tool mygo build -platform darwin/universal,windows/amd64,linux/amd64
 
 验证记录：
 
-- `CGO_ENABLED=0 go test -count=1 ./...`：通过；覆盖 SQLite 全字段重开持久化、CRUD、日期校验、五维筛选、配置权限，以及 AI 多模态请求、取消与错误处理。
+- `CGO_ENABLED=0 go test -count=1 ./...`：通过；覆盖 SQLite 全字段重开持久化、CRUD、日期校验、五维筛选、看板分组、示例覆盖 / 重载 / 安全清除 / 旧库迁移、配置权限，以及 AI 多模态请求、取消与错误处理。
 - `go test -race -count=1 ./...`、`go vet ./...`、`go tool mygo vet .`：通过。
-- MyGo 无窗口交互测试（`ui.NewTester`）：新增 / 编辑 / 删除确认、筛选、筛选中行内改状态、设置保存、AI 草稿确认前不落库。
+- MyGo 无窗口交互测试（`ui.NewTester`）：新增 / 编辑 / 删除确认、列表与看板共用筛选、跨列与筛选中改状态落库、卡片编辑返回看板、示例载入 / 重载 / 清除及取消确认、设置保存、AI 草稿确认前不落库。
+- Linux 原生窗口：使用本功能载入的 18 条示例数据验证看板切换、状态菜单、正文编辑、横向 / 列内滚动及 1060×700 窄窗口；检查列表 / 看板示例标签、空状态与设置区块，未调用真实 AI。
 - Linux `go run .`：标题栏 / 任务栏图标、仅 key 设置保存（密码掩码）、文件选择附加招聘截图；已检查默认 / 已保存截图及真实鼠标录屏。
 - `go tool mygo build -platform linux/amd64`：成功生成可执行文件、`.deb` 和 `.tar.gz`。`go tool mygo build -platform windows/amd64`：成功生成 exe，因未安装 NSIS 跳过安装包。macOS arm64 交叉编译通过；Windows / macOS 均未实机运行。
 - 未调用真实 DeepSeek；固定接口、模型与截图请求通过本地 mock 验证，服务端模型可用性与识别准确率未实测。Linux orb 无 GPU，窗口使用 MyGo 的 CPU 绘制回退。
@@ -145,13 +175,12 @@ go tool mygo build -platform darwin/universal,windows/amd64,linux/amd64
 
 - `main.go`：数据目录、应用生命周期与原生窗口。
 - `app.go`：界面状态、持久化动作、图片附件与可取消的后台提取。
-- `views.go`：列表、筛选、编辑、AI 录入、设置；无 webview。
-- `internal/tracker/`：领域校验、SQLite、仅 key 的配置文件、DeepSeek 客户端；不依赖 UI，可独立测试。
+- `views.go`：列表、看板、筛选、编辑、AI 录入、设置与确认对话框；无 webview。
+- `internal/tracker/`：领域校验、SQLite 与迁移、示例数据、仅 key 的配置文件、DeepSeek 客户端；不依赖 UI，可独立测试。
 - `main_test.go`：从用户操作入口验证完整流程。
 
 ## Roadmap（尚未实现）
 
-- [ ] 看板视图
 - [ ] 跟进提醒
 - [ ] CSV 导出
 - [ ] 统计图

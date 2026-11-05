@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/egoist/mygo"
 	"github.com/egoist/mygo/ui"
@@ -17,28 +18,31 @@ import (
 
 // All UI state belongs to the main thread. Workers publish via Window.Update.
 type app struct {
-	store      *tracker.Store
-	win        *mygo.Window
-	config     tracker.Config
-	configPath string
-	items      []tracker.Application
-	filter     tracker.Filter
-	table      ui.ListState
-	page       string
-	draft      tracker.Application
-	draftAI    bool
-	deleteID   int64
-	askDelete  bool
-	message    string
-	failed     bool
-	input      string
-	image      []byte
-	imageName  string
-	preview    *ui.Bitmap
-	loading    bool
-	busy       bool
-	cancel     context.CancelFunc
-	requestID  int
+	store        *tracker.Store
+	win          *mygo.Window
+	config       tracker.Config
+	configPath   string
+	items        []tracker.Application
+	filter       tracker.Filter
+	table        ui.ListState
+	recordsView  int
+	page         string
+	draft        tracker.Application
+	draftAI      bool
+	deleteID     int64
+	askDelete    bool
+	askLoadDemo  bool
+	askClearDemo bool
+	message      string
+	failed       bool
+	input        string
+	image        []byte
+	imageName    string
+	preview      *ui.Bitmap
+	loading      bool
+	busy         bool
+	cancel       context.CancelFunc
+	requestID    int
 }
 
 func (a *app) fail(err error) {
@@ -96,6 +100,34 @@ func (a *app) remove() {
 	}
 	a.reload()
 	a.notify("投递记录已删除")
+}
+
+func (a *app) hasDemo() bool {
+	for _, item := range a.items {
+		if item.IsDemo {
+			return true
+		}
+	}
+	return false
+}
+
+func (a *app) loadDemo() {
+	count, err := a.store.LoadDemo(time.Now())
+	if err != nil {
+		a.fail(err)
+		return
+	}
+	a.reload()
+	a.notify(fmt.Sprintf("已载入 %d 条示例数据；真实记录保持不变", count))
+}
+
+func (a *app) clearDemo() {
+	if err := a.store.ClearDemo(); err != nil {
+		a.fail(err)
+		return
+	}
+	a.reload()
+	a.notify("已清除示例数据；真实记录保持不变")
 }
 
 func (a *app) saveConfig() {

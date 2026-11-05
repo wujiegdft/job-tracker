@@ -102,7 +102,7 @@ func TestExtractMultimodalAndSafeDraft(t *testing.T) {
 		if parts[0].Type != "text" || parts[0].Text != text || parts[1].Type != "image_url" || parts[1].ImageURL.URL != "data:image/png;base64,"+base64.StdEncoding.EncodeToString(pngBytes.Bytes()) {
 			t.Error("multimodal data did not preserve text and base64 image")
 		}
-		writeCompletion(w, `{"company":" 公司 ","role":"Go工程师","city":"杭州","source":"内推","source_person":"张三","url":"https://example.com/job","jd":"","contact":"招聘部","notes":"需核实","salary":"25-35K","id":{"malicious":true},"status":"Offer","priority":"高","applied_date":"1900-01-01","follow_up_date":"bad","interview_at":"2000-01-01 00:00"}`)
+		writeCompletion(w, `{"company":" 公司 ","role":"Go工程师","city":"杭州","source":"内推","source_person":"张三","url":"https://example.com/job","jd":"","contact":"招聘部","notes":"需核实","salary":"25-35K","id":{"malicious":true},"is_demo":true,"status":"Offer","priority":"高","applied_date":"1900-01-01","follow_up_date":"bad","interview_at":"2000-01-01 00:00"}`)
 	}))
 	defer srv.Close()
 	mockDeepSeekTransport(t, srv)
@@ -115,7 +115,7 @@ func TestExtractMultimodalAndSafeDraft(t *testing.T) {
 	if a.Company != "公司" || a.Role != "Go工程师" || a.City != "杭州" || a.Source != "内推" || a.SourcePerson != "张三" || a.Contact != "招聘部" || a.Notes != "需核实" || a.Salary != "25-35K" || a.URL != "https://example.com/job" || a.JD != text {
 		t.Fatalf("facts/fallback lost: %+v", a)
 	}
-	if a.ID != 0 || a.Status != "已投递" || a.Priority != "普通" || (a.AppliedDate != before && a.AppliedDate != after) || a.FollowUpDate != "" || a.InterviewAt != "" {
+	if a.ID != 0 || a.IsDemo || a.Status != "已投递" || a.Priority != "普通" || (a.AppliedDate != before && a.AppliedDate != after) || a.FollowUpDate != "" || a.InterviewAt != "" {
 		t.Fatalf("model controlled protected fields: %+v", a)
 	}
 }

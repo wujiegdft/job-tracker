@@ -11,10 +11,10 @@ func TestApplicationDefaultsAndJSON(t *testing.T) {
 	before := time.Now().Format(time.DateOnly)
 	a := NewApplication()
 	after := time.Now().Format(time.DateOnly)
-	if (a.AppliedDate != before && a.AppliedDate != after) || a.ID != 0 || a.Status != "已投递" || a.Priority != "普通" || a.Source != "其他" {
+	if (a.AppliedDate != before && a.AppliedDate != after) || a.ID != 0 || a.IsDemo || a.Status != "已投递" || a.Priority != "普通" || a.Source != "其他" {
 		t.Fatalf("unexpected defaults: %+v", a)
 	}
-	wantTags := []string{"id", "company", "role", "city", "source", "source_person", "status", "applied_date", "follow_up_date", "interview_at", "url", "jd", "contact", "notes", "priority", "salary"}
+	wantTags := []string{"id", "company", "role", "city", "source", "source_person", "status", "applied_date", "follow_up_date", "interview_at", "url", "jd", "contact", "notes", "priority", "salary", "is_demo"}
 	data, err := json.Marshal(a)
 	if err != nil {
 		t.Fatal(err)
@@ -35,6 +35,27 @@ func TestApplicationDefaultsAndJSON(t *testing.T) {
 		!reflect.DeepEqual(Sources, []string{"内推", "Boss直聘", "猎聘", "猎头", "官网", "其他"}) ||
 		!reflect.DeepEqual(Priorities, []string{"普通", "高", "低"}) {
 		t.Fatal("public options differ from the UI contract")
+	}
+}
+
+func TestGroupByStatus(t *testing.T) {
+	items := []*Application{
+		{ID: 11, Status: "Offer"}, {ID: 4, Status: "已投递"},
+		{ID: 9, Status: "一面"}, {ID: 6, Status: "Offer"}, {ID: 2, Status: "放弃"},
+	}
+	got := map[string][]int64{}
+	groups := GroupByStatus(items)
+	for status, group := range groups {
+		for _, item := range group {
+			got[status] = append(got[status], item.ID)
+		}
+	}
+	want := map[string][]int64{"Offer": {11, 6}, "已投递": {4}, "一面": {9}, "放弃": {2}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("grouping/order = %v, want %v", got, want)
+	}
+	if len(groups["笔试"]) != 0 || len(GroupByStatus(nil)) != 0 {
+		t.Fatal("an empty status/input must have no cards")
 	}
 }
 

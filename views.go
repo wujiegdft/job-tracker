@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/egoist/mygo/ui"
 	"job-tracker-native/internal/tracker"
@@ -53,6 +54,18 @@ func (a *app) view(c *ui.Context) {
 	if ui.AlertDialog(c, &a.askDelete, "删除这条投递记录？", "记录将从本机永久删除，无法撤销。", "取消", "确认删除") == 1 {
 		a.remove()
 	}
+	if a.askLoadDemo {
+		text := fmt.Sprintf("将添加 %d 条示例数据，可随时在设置里清除。", len(tracker.DemoApplications(time.Now())))
+		if a.hasDemo() {
+			text += "现有示例将被替换（含编辑过的示例），真实记录不受影响。"
+		}
+		if ui.AlertDialog(c, &a.askLoadDemo, "载入示例数据？", text, "取消", "确认载入") == 1 {
+			a.loadDemo()
+		}
+	}
+	if ui.AlertDialog(c, &a.askClearDemo, "清除示例数据？", "仅删除带“示例”标记的记录（含编辑过的示例），保留全部真实记录。此操作无法撤销。", "取消", "确认清除") == 1 {
+		a.clearDemo()
+	}
 }
 
 func heading(c *ui.Context, title, subtitle string) {
@@ -74,7 +87,7 @@ func selectField(c *ui.Context, label string, value *string, options []string) {
 
 func (a *app) list(c *ui.Context) {
 	ui.Row(c).Gap(12).Children(func() {
-		heading(c, "每一次投递，都有迹可循", "从公司出发，找到下一步机会。状态可直接在列表中修改。")
+		heading(c, "每一次投递，都有迹可循", "从公司出发，找到下一步机会。列表与看板共用筛选，状态可直接修改。")
 		ui.PrimaryButton(c, "+ 新增投递").OnClick(func() { a.edit(tracker.NewApplication(), false) })
 	})
 	ui.Grid(c).Columns(3).AlignItems(ui.End).Padding(18).GapX(12).GapY(14).
@@ -102,12 +115,27 @@ func (a *app) list(c *ui.Context) {
 			visible = append(visible, &a.items[i])
 		}
 	}
-	ui.Textf(c, "%d 条匹配 / 共 %d 条投递", len(visible), len(a.items)).FontSize(13).TextColor(c.Theme().TextMuted)
+	ui.Row(c).Gap(12).AlignItems(ui.Center).Children(func() {
+		ui.Column(c).Grow(1).Gap(3).Children(func() {
+			ui.Textf(c, "%d 条匹配 / 共 %d 条投递", len(visible), len(a.items)).FontSize(13).TextColor(c.Theme().TextMuted)
+			if a.recordsView == 1 {
+				ui.Text(c, "横向滚动查看全部状态 · 点击卡片正文编辑 · 下拉修改状态即保存").FontSize(11).TextColor(c.Theme().TextMuted)
+			}
+		})
+		ui.Segmented(c, &a.recordsView, "列表", "看板").Label("投递视图")
+	})
+	if a.recordsView == 1 {
+		a.kanban(c, visible)
+		return
+	}
 	if len(visible) == 0 {
 		ui.Column(c).Grow(1).Center().Gap(12).Children(func() {
 			ui.Text(c, "下一份机会，从这里开始").FontSize(21).Bold()
 			ui.Text(c, "暂无匹配记录。新增一条投递，或清空筛选条件。").TextColor(c.Theme().TextMuted)
-			ui.Button(c, "从招聘文字或截图录入").OnClick(func() { a.navigate("ai") })
+			ui.Row(c).Gap(12).Children(func() {
+				ui.Button(c, "从招聘文字或截图录入").OnClick(func() { a.navigate("ai") })
+				a.demoLoadButton(c)
+			})
 		})
 		return
 	}
@@ -122,7 +150,12 @@ func (a *app) list(c *ui.Context) {
 		switch col {
 		case 0:
 			ui.Column(c).Gap(3).Padding(8, 0).Children(func() {
-				ui.Text(c, item.Company).Bold().SingleLine()
+				ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+					ui.Text(c, item.Company).Bold().SingleLine().Grow(1).MinWidth(0).Tooltip(item.Company)
+					if item.IsDemo {
+						ui.Text(c, "示例").FontSize(10).Padding(2, 5).Radius(4).Background(c.Theme().SurfaceHover).TextColor(c.Theme().Accent).Shrink(0)
+					}
+				})
 				ui.Text(c, "优先级 · "+item.Priority).FontSize(11).TextColor(c.Theme().TextMuted)
 			})
 		case 1:
@@ -142,6 +175,73 @@ func (a *app) list(c *ui.Context) {
 			})
 		}
 	}).Grow(1).Border(1, c.Theme().Border).Radius(10)
+}
+
+func (a *app) kanban(c *ui.Context, visible []*tracker.Application) {
+	t := c.Theme()
+	groups := tracker.GroupByStatus(visible)
+	ui.ScrollHorizontal(c.Key("kanban")).Grow(1).MinWidth(0).MinHeight(0).Gap(14).Padding(0, 0, 10, 0).AlignItems(ui.Stretch).Children(func() {
+		for _, status := range tracker.Statuses {
+			items := groups[status]
+			ui.Column(c.Key(status)).Width(256).Shrink(0).FillHeight().MinHeight(0).Padding(12).Gap(12).
+				Radius(12).Background(t.Surface).Border(1, t.Border).Children(func() {
+				ui.Row(c).Height(22).Shrink(0).AlignItems(ui.Center).Children(func() {
+					ui.Textf(c, "%s · %d", status, len(items)).Bold().FontSize(14)
+				})
+				ui.Scroll(c.Key("cards")).Grow(1).MinHeight(0).Gap(12).Children(func() {
+					if len(items) == 0 {
+						ui.Text(c, "暂无投递").FontSize(13).TextColor(t.TextMuted).Padding(18, 0)
+					}
+					for _, item := range items {
+						a.kanbanCard(c, item)
+					}
+				})
+			})
+		}
+	})
+}
+
+func (a *app) kanbanCard(c *ui.Context, item *tracker.Application) {
+	t := c.Theme()
+	ui.Column(c.Key(item.ID)).FillWidth().Height(232).Shrink(0).Padding(12).Gap(10).
+		Radius(10).Background(t.Background).Border(1, t.Border).Children(func() {
+		body := ui.ButtonBase(c).Column().AlignItems(ui.Stretch).Justify(ui.Start).Grow(1).MinHeight(0).MinWidth(0).Gap(6).Radius(6).
+			Label(fmt.Sprintf("编辑投递 %d", item.ID)).OnClick(func() { a.edit(*item, false) })
+		if body.Hovered() {
+			body.Background(t.SurfaceHover)
+		}
+		body.Children(func() {
+			ui.Row(c).Gap(6).AlignItems(ui.Center).Children(func() {
+				ui.Text(c, item.Company).Bold().FontSize(16).SingleLine().Grow(1).MinWidth(0).Tooltip(item.Company)
+				if item.IsDemo {
+					ui.Text(c, "示例").FontSize(10).Padding(2, 5).Radius(4).Background(t.SurfaceHover).TextColor(t.Accent).Shrink(0)
+				}
+			})
+			ui.Text(c, item.Role).FontSize(14).MaxLines(2).Height(40).Tooltip(item.Role)
+			meta := item.Source
+			if item.City != "" {
+				meta = item.City + " · " + meta
+			}
+			ui.Text(c, meta).FontSize(12).TextColor(t.TextMuted).SingleLine().Tooltip(meta)
+			color := t.TextMuted
+			if item.Priority == "高" {
+				color = t.Accent
+			}
+			ui.Textf(c, "优先级 · %s", item.Priority).FontSize(12).TextColor(color)
+			ui.Column(c).Height(38).Shrink(0).Gap(2).Children(func() {
+				if item.FollowUpDate != "" {
+					ui.Text(c, "跟进 · "+item.FollowUpDate).FontSize(12).SingleLine()
+				}
+				if item.InterviewAt != "" {
+					ui.Text(c, "面试 · "+item.InterviewAt).FontSize(12).SingleLine()
+				}
+			})
+		})
+		// Commit after selection, before changing the card's group or filtering it out.
+		status := item.Status
+		ui.Select(c, &status, tracker.Statuses).MinWidth(0).FillWidth().Height(32).
+			Label(fmt.Sprintf("修改状态 %d", item.ID)).OnChange(func() { item.Status = status; a.saveStatus(item) })
+	})
 }
 
 func (a *app) editor(c *ui.Context) {
@@ -253,5 +353,22 @@ func (a *app) settings(c *ui.Context) {
 			ui.PrimaryButton(c, "保存设置").OnClick(a.saveConfig)
 		})
 		ui.Text(c, "无需配置 AI，也可使用全部手动录入、检索和状态管理功能。").TextColor(c.Theme().TextMuted)
+		ui.Column(c).MaxWidth(750).Padding(22).Gap(16).Radius(12).Border(1, c.Theme().Border).Children(func() {
+			ui.Text(c, "演示数据").FontSize(20).Bold()
+			ui.Text(c, "18 条虚构投递，涵盖全部状态与来源；跟进和面试日期按载入当天生成。").TextColor(c.Theme().TextMuted)
+			ui.Text(c, "带“示例”标记的记录在编辑后仍是示例；重新载入会替换旧示例，清除不会影响真实记录。").FontSize(13).TextColor(c.Theme().TextMuted)
+			ui.Row(c).Gap(12).Children(func() {
+				a.demoLoadButton(c)
+				ui.Button(c, "清除示例数据").Disabled(!a.hasDemo()).OnClick(func() { a.askClearDemo = true })
+			})
+		})
 	})
+}
+
+func (a *app) demoLoadButton(c *ui.Context) {
+	label := "载入示例数据"
+	if a.hasDemo() {
+		label = "重新载入"
+	}
+	ui.Button(c, label).OnClick(func() { a.askLoadDemo = true })
 }

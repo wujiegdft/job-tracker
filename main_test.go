@@ -93,6 +93,153 @@ func TestApplicationWorkflow(t *testing.T) {
 	}
 }
 
+func TestKanbanWorkflow(t *testing.T) {
+	a, tt := testApp(t)
+	items := []tracker.Application{
+		{Company: "远山科技", Role: "Go 后端", City: "上海", Source: "官网", Status: "已投递", Priority: "高", FollowUpDate: "2026-11-06", InterviewAt: "2026-11-07 14:30"},
+		{Company: "星河实验室", Role: "数据工程师", City: "上海", Source: "其他", Status: "简历筛选", Priority: "普通"},
+		{Company: "远山科技", Role: "平台工程师", City: "杭州", Source: "官网", Status: "简历筛选", Priority: "低"},
+	}
+	for i := range items {
+		if err := a.store.Save(&items[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.reload()
+	tt.Frame()
+	id := items[0].ID
+	storedStatus := func() string {
+		t.Helper()
+		saved, err := a.store.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range saved {
+			if item.ID == id {
+				return item.Status
+			}
+		}
+		t.Fatal("card was removed from storage")
+		return ""
+	}
+	if _, ok := tt.Find(fmt.Sprintf("编辑 %d", id)); !ok {
+		t.Fatal("records must default to the list")
+	}
+	typeInto(t, tt, "筛选公司", "远山")
+	typeInto(t, tt, "城市", "上海")
+	click(t, tt, "看板")
+	if !tt.HasText("1 条匹配 / 共 3 条投递") || !tt.HasText("已投递 · 1") || !tt.HasText("简历筛选 · 0") || tt.HasText("平台工程师") {
+		t.Fatal("kanban did not reuse the list's combined filters")
+	}
+	for _, text := range []string{"Go 后端", "上海 · 官网", "优先级 · 高", "跟进 · 2026-11-06", "面试 · 2026-11-07 14:30", "放弃 · 0", "暂无投递"} {
+		if !tt.HasText(text) {
+			t.Fatalf("kanban missing %q", text)
+		}
+	}
+	click(t, tt, fmt.Sprintf("修改状态 %d", id))
+	click(t, tt, "简历筛选")
+	if storedStatus() != "简历筛选" || a.page != "" || !tt.HasText("已投递 · 0") || !tt.HasText("简历筛选 · 1") {
+		t.Fatal("changing a card status must persist and regroup, not open the editor")
+	}
+	click(t, tt, fmt.Sprintf("编辑投递 %d", id))
+	typeInto(t, tt, "岗位 *", "Go 平台后端")
+	click(t, tt, "确认保存")
+	if !tt.HasText("Go 平台后端") || !tt.HasText("简历筛选 · 1") {
+		t.Fatal("editing a card must return to the same filtered board")
+	}
+	click(t, tt, "状态")
+	// Use the focused menu: a card's current status has the same visible text.
+	tt.Key(0, ui.KeyDown)
+	tt.Key(0, ui.KeyDown)
+	tt.Key(0, ui.KeyEnter)
+	if a.filter.Status != "简历筛选" {
+		t.Fatalf("status filter was not selected: %+v", a.filter)
+	}
+	click(t, tt, fmt.Sprintf("修改状态 %d", id))
+	click(t, tt, "已投递")
+	if storedStatus() != "已投递" || !tt.HasText("0 条匹配 / 共 3 条投递") || !tt.HasText("简历筛选 · 0") {
+		t.Fatalf("status change under filter: stored=%q filter=%+v texts=%v", storedStatus(), a.filter, tt.Texts())
+	}
+	click(t, tt, "清空筛选")
+	if !tt.HasText("已投递 · 1") || !tt.HasText("简历筛选 · 2") {
+		t.Fatal("clear filters must restore all grouped cards")
+	}
+	click(t, tt, "列表")
+	if !tt.HasText("3 条匹配 / 共 3 条投递") || !tt.HasText("Go 平台后端") {
+		t.Fatal("switching back to the list lost the saved edit or records")
+	}
+}
+
+func TestDemoWorkflow(t *testing.T) {
+	a, tt := testApp(t)
+	click(t, tt, "载入示例数据")
+	if !tt.HasText("将添加 18 条示例数据，可随时在设置里清除") {
+		t.Fatal("loading must explain the count and cleanup before confirmation")
+	}
+	click(t, tt, "取消")
+	if len(a.items) != 0 {
+		t.Fatal("canceling demo load added records")
+	}
+	click(t, tt, "+ 新增投递")
+	typeInto(t, tt, "公司 *", "真实投递")
+	typeInto(t, tt, "岗位 *", "用户自己的岗位")
+	click(t, tt, "确认保存")
+	realID := a.items[0].ID
+	click(t, tt, "设置")
+	click(t, tt, "载入示例数据")
+	click(t, tt, "确认载入")
+	if len(a.items) != 19 || !tt.HasText("重新载入") || !a.hasDemo() {
+		t.Fatal("settings did not load demos alongside the real record")
+	}
+	click(t, tt, "投递记录")
+	if !tt.HasText("示例") {
+		t.Fatal("list must mark demo records")
+	}
+	click(t, tt, "看板")
+	var demoID int64
+	for _, item := range a.items {
+		if item.IsDemo {
+			demoID = item.ID
+			break
+		}
+	}
+	click(t, tt, fmt.Sprintf("编辑投递 %d", demoID))
+	typeInto(t, tt, "岗位 *", "编辑过的示例岗位")
+	click(t, tt, "确认保存")
+	if !tt.HasText("编辑过的示例岗位") || !tt.HasText("示例") {
+		t.Fatal("edited demo must remain visible and marked on the board")
+	}
+	click(t, tt, "设置")
+	click(t, tt, "重新载入")
+	click(t, tt, "取消")
+	if len(a.items) != 19 {
+		t.Fatal("canceling reload changed the dataset")
+	}
+	click(t, tt, "重新载入")
+	click(t, tt, "确认载入")
+	if len(a.items) != 19 {
+		t.Fatal("reloading duplicated demo records")
+	}
+	click(t, tt, "清除示例数据")
+	click(t, tt, "取消")
+	if len(a.items) != 19 {
+		t.Fatal("canceling cleanup removed records")
+	}
+	click(t, tt, "清除示例数据")
+	click(t, tt, "确认清除")
+	stored, err := a.store.List()
+	if err != nil || len(stored) != 1 || stored[0].ID != realID || stored[0].IsDemo || stored[0].Role != "用户自己的岗位" {
+		t.Fatalf("cleanup must preserve the real record: %+v, %v", stored, err)
+	}
+	if !tt.HasText("载入示例数据") || a.hasDemo() {
+		t.Fatal("cleanup must reset the load action")
+	}
+	click(t, tt, "投递记录")
+	if !tt.HasText("1 条匹配 / 共 1 条投递") || !tt.HasText("用户自己的岗位") {
+		t.Fatal("board did not refresh after demo cleanup")
+	}
+}
+
 func TestDraftAndSettings(t *testing.T) {
 	a, tt := testApp(t)
 	click(t, tt, "AI 智能录入")
